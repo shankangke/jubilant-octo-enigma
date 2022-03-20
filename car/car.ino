@@ -1,22 +1,46 @@
-#define MAX_SECONDS 1
-#define DETECT_PERIOD 5
-#define BACK_MILLIS 400
-#define GO_MILLIS 200
+#define TIME_DETECT_MILLIS 1
 #define PIN_LEFT_GO 9
 #define PIN_LEFT_BACK 8
 #define PIN_RIGHT_GO 10
 #define PIN_RIGHT_BACK 11
 #define PIN_LEFT_SENSOR 6
 #define PIN_RIGHT_SENSOR 5
+#define ACT_SCHEME                                                             \
+  {                                                                            \
+    LEFT_GO_STA, LEFT_GO_PWM, LEFT_BACK_STA, LEFT_BACK_PWM, RIGHT_GO_STA,      \
+        RIGHT_GO_PWM, RIGHT_BACK_STA, RIGHT_BACK_PWM, DURATION                 \
+  }
+#define ACT_GO                                                                 \
+  { HIGH, 70, LOW, 0, HIGH, 75, LOW, 0, 5 }
+#define ACT_BACK                                                               \
+  { LOW, 0, HIGH, 255, LOW, 0, HIGH, 255, 100 }
+#define ACT_SPIN_LEFT                                                          \
+  { LOW, 0, HIGH, 255, HIGH, 255, LOW, 0, 5 }
+#define ACT_SPIN_RIGHT                                                         \
+  { HIGH, 255, LOW, 0, LOW, 0, HIGH, 255, 5 }
+#define ACT_STOP                                                               \
+  { LOW, 0, LOW, 0, LOW, 0, LOW, 0, 200 }
 #define LEFT 1
 #define RIGHT 2
-#define FORE 1
-#define BACK 2
 #define TRUE 1
 #define FALSE 0
 
-unsigned long startTime, endTime;
-int shouldStop;
+typedef struct {
+  int leftGoSta;
+  int leftGoPWM;
+  int leftBackSta;
+  int leftBackPWM;
+  int rightGoSta;
+  int rightGoPWM;
+  int rightBackSta;
+  int rightBackPWM;
+  int duration;
+} action;
+
+typedef struct {
+  bool leftDetected;
+  bool rightDetected;
+} status;
 
 void setPinOutput() {
   pinMode(PIN_LEFT_GO, OUTPUT);
@@ -25,177 +49,66 @@ void setPinOutput() {
   pinMode(PIN_RIGHT_BACK, OUTPUT);
 }
 
-void checkStop() {
-  if (millis() < endTime) {
-    shouldStop = FALSE;
-  }
+status detectStatus() {
+  status state;
+  state.leftDetected = (digitalRead(PIN_LEFT_SENSOR) == LOW) ? true : false;
+  state.rightDetected = (digitalRead(PIN_RIGHT_SENSOR) == LOW) ? true : false;
+  return state;
 }
 
-void go(int rol, int dir) {
-  int pinGo, pinBack, staGo, staBack, pwm, pwmGo, pwmBack;
-  if (shouldStop == TRUE) {
-    return;
-  }
-  if (dir == FORE) {
-    if (rol == LEFT) {
-      pwm = 70;
-      pinGo = PIN_LEFT_GO;
-      pinBack = PIN_LEFT_BACK;
-    } else if (rol == RIGHT) {
-      pwm = 80;
-      pinGo = PIN_RIGHT_GO;
-      pinBack = PIN_RIGHT_BACK;
-    }
-    staGo = HIGH;
-    pwmGo = pwm;
-    staBack = LOW;
-    pwmBack = 0;
-  } else if (dir == BACK) {
-    if (rol == LEFT) {
-      pwm = 130;
-      pinGo = PIN_LEFT_GO;
-      pinBack = PIN_LEFT_BACK;
-    } else if (rol == RIGHT) {
-      pwm = 255;
-      pinGo = PIN_RIGHT_GO;
-      pinBack = PIN_RIGHT_BACK;
-    }
-    staGo = LOW;
-    pwmGo = 0;
-    staBack = HIGH;
-    pwmBack = pwm;
-  }
-  digitalWrite(pinGo, staGo);
-  digitalWrite(pinBack, staBack);
-  analogWrite(pinGo, pwmGo);
-  analogWrite(pinBack, pwmBack);
+action actGo() {
+  action act = ACT_GO;
+  return act;
 }
-
-void stop(int rol) {
-  int pinGo, pinBack;
-  if (rol == LEFT) {
-    pinGo = PIN_LEFT_GO;
-    pinBack = PIN_LEFT_BACK;
-  } else if (rol == RIGHT) {
-    pinGo = PIN_RIGHT_GO;
-    pinBack = PIN_RIGHT_BACK;
-  }
-  Serial.print("Setting ");
-  Serial.print(pinGo);
-  Serial.print(" to low\n");
-  digitalWrite(pinGo, LOW);
-  digitalWrite(pinBack, LOW);
-  Serial.print("Setting ");
-  Serial.print(pinBack);
-  Serial.print(" to low\n");
+action actStop() {
+  action act = ACT_STOP;
+  return act;
 }
-
-int isOn(int rol) {
-  int pin, state;
-  if (rol == LEFT) {
-    pin = PIN_LEFT_SENSOR;
-  } else if (rol == RIGHT) {
-    pin = PIN_RIGHT_SENSOR;
-  }
-  state = digitalRead(pin);
-  if (state == LOW) {
-    // Detected Something
-    return TRUE;
-  } else if (state == HIGH) {
-    // Nothing Found
-    return FALSE;
-  }
+action actBack() {
+  action act = ACT_BACK;
+  return act;
 }
-
-void correct() {
-  int left, right, triedBack, triedRight, triedLeft;
-  triedBack = FALSE;
-  triedRight = FALSE;
-  do {
-    checkStop();
-    if (shouldStop == TRUE) {
-      return;
-    }
-    left = isOn(LEFT);
-    right = isOn(RIGHT);
-    Serial.print("leftDetected:");
-    Serial.println(left == TRUE);
-    Serial.print("rightDetected:");
-    Serial.println(right == TRUE);
-    if (left == FALSE && right == FALSE) {
-      Serial.println("All clear. Going on...");
-      go(RIGHT, FORE);
-      go(LEFT, FORE);
+action actSpinRight() {
+  action act = ACT_SPIN_RIGHT;
+  return act;
+}
+action actSpinLeft() {
+  action act = ACT_SPIN_LEFT;
+  return act;
+}
+action decideAction(status state, action currentAction) {
+  if (state.leftDetected || state.rightDetected) {
+    if (state.leftDetected && !state.rightDetected) {
+      return actSpinLeft();
+    } else if (!state.leftDetected && state.rightDetected) {
+      return actSpinRight();
     } else {
-      Serial.println("Stopping...");
-      stop(LEFT);
-      stop(RIGHT);
-      Serial.println("Going back...");
-      go(LEFT, BACK);
-      go(RIGHT, BACK);
-      delay(BACK_MILLIS);
-      Serial.println("Stopping...");
-      stop(LEFT);
-      stop(RIGHT);
-      if (left == FALSE && right == TRUE) {
-        Serial.println("Going left...");
-        stop(LEFT);
-        go(RIGHT, FORE);
-        delay(GO_MILLIS);
-      } else if (left == TRUE && right == FALSE) {
-        Serial.println("Going right...");
-        stop(RIGHT);
-        go(LEFT, FORE);
-        delay(GO_MILLIS);
-      } else if (left == TRUE && right == TRUE) {
-        if (triedRight == FALSE) {
-          Serial.println("Trying right...");
-          stop(RIGHT);
-          go(LEFT, FORE);
-          delay(GO_MILLIS);
-          triedRight = TRUE;
-        } else if (triedLeft == FALSE) {
-          Serial.println("Trying left...");
-          stop(LEFT);
-          go(RIGHT, FORE);
-          delay(GO_MILLIS);
-          triedLeft = TRUE;
-        }
+      if (currentAction.leftGoSta == HIGH || currentAction.rightGoSta == HIGH) {
+        return actStop();
+      } else {
+        return actBack();
       }
     }
-    delay(DETECT_PERIOD);
-  } while (shouldStop == FALSE && (left == TRUE || right == TRUE));
+  } else {
+    return actGo();
+  }
 }
-
-void setup() {
-  Serial.begin(9600);
-  setPinOutput();
-  startTime = millis();
-  endTime = startTime + 1000 * MAX_SECONDS;
-  shouldStop = FALSE;
-  Serial.print("startTime:");
-  Serial.println(startTime);
-  Serial.print("endTime:");
-  Serial.println(endTime);
+void applyAction(action act) {
+  digitalWrite(PIN_LEFT_GO, act.leftGoSta);
+  analogWrite(PIN_LEFT_GO, act.leftGoPWM);
+  digitalWrite(PIN_LEFT_BACK, act.leftBackSta);
+  analogWrite(PIN_LEFT_BACK, act.leftBackPWM);
+  digitalWrite(PIN_RIGHT_GO, act.rightGoSta);
+  analogWrite(PIN_RIGHT_GO, act.rightGoPWM);
+  digitalWrite(PIN_RIGHT_BACK, act.rightBackSta);
+  analogWrite(PIN_RIGHT_BACK, act.rightBackPWM);
+  delay(act.duration);
 }
+void setup() { setPinOutput(); }
 
 void loop() {
-  while (shouldStop == FALSE) {
-    go(LEFT, FORE);
-    go(RIGHT, FORE);
-    correct();
-    checkStop();
-  }
-  stop(LEFT);
-  stop(RIGHT);
-  Serial.println("stopped...");
-  // back(10);       //后退1s
-  // brake(5);       //停止0.5s
-  // run(10);        //前进1s
-  // brake(5);       //停止0.5s
-  // left(10);       //向左转1s
-  // right(10);      //向右转1s
-  // spin_right(20); //向右旋转2s
-  // spin_left(20);  //向左旋转2s
-  // brake(5);       //停车
+  static action currentAct = actStop();
+  currentAct = decideAction(detectStatus(), currentAct);
+  applyAction(currentAct);
+  delay(TIME_DETECT_MILLIS);
 }
