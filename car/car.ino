@@ -1,8 +1,10 @@
 #define TIME_DETECT_MILLIS 1
-#define PIN_LEFT_GO 9
+#define PIN_KEY A2
+#define PIN_BEEP A3
+#define PIN_LEFT_GO 9 // pwm
 #define PIN_LEFT_BACK 8
-#define PIN_RIGHT_GO 10
-#define PIN_RIGHT_BACK 11
+#define PIN_RIGHT_GO 10   // pwm
+#define PIN_RIGHT_BACK 11 // pwm
 #define PIN_LEFT_SENSOR 6
 #define PIN_RIGHT_SENSOR 5
 #define ACT_SCHEME                                                             \
@@ -15,9 +17,9 @@
 #define ACT_BACK                                                               \
   { LOW, 0, HIGH, 255, LOW, 0, HIGH, 255, 100 }
 #define ACT_SPIN_LEFT                                                          \
-  { LOW, 0, HIGH, 255, HIGH, 255, LOW, 0, 5 }
+  { LOW, 0, HIGH, 0, HIGH, 75, LOW, 0, 5 }
 #define ACT_SPIN_RIGHT                                                         \
-  { HIGH, 255, LOW, 0, LOW, 0, HIGH, 255, 5 }
+  { HIGH, 70, LOW, 0, LOW, 0, HIGH, 0, 5 }
 #define ACT_STOP                                                               \
   { LOW, 0, LOW, 0, LOW, 0, LOW, 0, 200 }
 #define LEFT 1
@@ -43,6 +45,7 @@ typedef struct {
 } status;
 
 void setPinOutput() {
+  pinMode(PIN_BEEP, OUTPUT);
   pinMode(PIN_LEFT_GO, OUTPUT);
   pinMode(PIN_LEFT_BACK, OUTPUT);
   pinMode(PIN_RIGHT_GO, OUTPUT);
@@ -56,41 +59,85 @@ status detectStatus() {
   return state;
 }
 
-action actGo() {
+action actGo(int duration = 0) {
   action act = ACT_GO;
+  if (duration != 0) {
+    act.duration = duration;
+  }
   return act;
 }
-action actStop() {
+action actStop(int duration = 0) {
   action act = ACT_STOP;
+  if (duration != 0) {
+    act.duration = duration;
+  }
   return act;
 }
-action actBack() {
+action actBack(int duration = 0) {
   action act = ACT_BACK;
+  if (duration != 0) {
+    act.duration = duration;
+  }
   return act;
 }
-action actSpinRight() {
+action actSpinRight(int duration = 0) {
   action act = ACT_SPIN_RIGHT;
+  if (duration != 0) {
+    act.duration = duration;
+  }
   return act;
 }
-action actSpinLeft() {
+action actSpinLeft(int duration = 0) {
   action act = ACT_SPIN_LEFT;
+  if (duration != 0) {
+    act.duration = duration;
+  }
   return act;
 }
-action decideAction(status state, action currentAction) {
-  if (state.leftDetected || state.rightDetected) {
-    if (state.leftDetected && !state.rightDetected) {
-      return actSpinLeft();
-    } else if (!state.leftDetected && state.rightDetected) {
-      return actSpinRight();
+action decideAction(status state, action currentAction, int duration = 0,
+                    bool *unmanned = nullptr, String command = "") {
+  if (command != "") {
+    if (command == "beep") {
+      digitalWrite(PIN_BEEP, HIGH);
+      delay(duration);
+      digitalWrite(PIN_BEEP, LOW);
+    } else if (command == "goon") {
+      return actGo(duration);
+    } else if (command == "back") {
+      return actBack(duration);
+    } else if (command == "stop") {
+      *unmanned = false;
+      return actStop();
+    } else if (command == "rspi") {
+      return actSpinRight(duration);
+    } else if (command == "lspi") {
+      return actSpinLeft(duration);
+    } else if (command == "auto") {
+      *unmanned = true;
     } else {
-      if (currentAction.leftGoSta == HIGH || currentAction.rightGoSta == HIGH) {
-        return actStop();
+      return actStop();
+    }
+  }
+
+  if (unmanned != nullptr && *unmanned) {
+    if (state.leftDetected || state.rightDetected) {
+      if (state.leftDetected && !state.rightDetected) {
+        return actSpinLeft();
+      } else if (!state.leftDetected && state.rightDetected) {
+        return actSpinRight();
       } else {
-        return actBack();
+        if (currentAction.leftGoSta == HIGH ||
+            currentAction.rightGoSta == HIGH) {
+          return actStop();
+        } else {
+          return actBack();
+        }
       }
+    } else {
+      return actGo();
     }
   } else {
-    return actGo();
+    return actStop();
   }
 }
 void applyAction(action act) {
@@ -104,11 +151,46 @@ void applyAction(action act) {
   analogWrite(PIN_RIGHT_BACK, act.rightBackPWM);
   delay(act.duration);
 }
-void setup() { setPinOutput(); }
+
+bool enabled(bool currentEnabled) {
+  if (digitalRead(PIN_KEY) == HIGH) {
+    digitalWrite(PIN_BEEP, HIGH);
+    while (digitalRead(PIN_KEY) == HIGH) {
+      ;
+    }
+    digitalWrite(PIN_BEEP, LOW);
+    return !currentEnabled;
+  } else {
+    return currentEnabled;
+  }
+}
+
+String parseMessage(String message, int *duration = nullptr) {
+  *duration = message.substring(4).toInt();
+  return message.substring(0, 4);
+}
+
+void setup() {
+  setPinOutput();
+  Serial.begin(9600);
+}
 
 void loop() {
+  static bool currentEnabled = false; // unmanned
   static action currentAct = actStop();
-  currentAct = decideAction(detectStatus(), currentAct);
+  currentEnabled = enabled(currentEnabled);
+  if (Serial.available()) {
+    int duration = 1;
+    String command = parseMessage(Serial.readStringUntil('.'), &duration);
+    currentAct = decideAction(detectStatus(), currentAct, duration,
+                              &currentEnabled, command);
+  } else if (currentEnabled) {
+    Serial.print("branch 2");
+    delay(TIME_DETECT_MILLIS);
+    currentAct = decideAction(detectStatus(), currentAct, 0, &currentEnabled);
+  } else {
+    currentAct = actStop();
+  }
+  Serial.print(currentEnabled);
   applyAction(currentAct);
-  delay(TIME_DETECT_MILLIS);
 }
